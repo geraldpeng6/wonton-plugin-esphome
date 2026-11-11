@@ -76,12 +76,20 @@ data_check() {
 }
 
 mcp_check() {
-  # 经总线调 get_config 读 data_write 写的标记设备，结果里要有标记。上游的 MCP 工具没标
-  # readOnlyHint，总线对它们一律先出确认卡：探针用主人令牌回答，等价主人在 App 里点允许。
-  local marker file gw url out rc n=0 card payload cid reply
-  marker="$(cat "$SMOKE_STATE" 2>/dev/null)"
-  [[ -n "$marker" ]] || { echo "SMOKE_STATE 里没有标记（data_write 没跑？）"; return 1; }
-  file="smoke-marker-$marker.yaml"
+  # 探针顺序在 data_write 之前（装→网页→身份→工具→数据），不能依赖 data_write 留的标记：
+  # 自己写一个标记设备 YAML 进 /config，经总线 get_config 读回来断言，读完删掉。
+  # 上游的 MCP 工具没标 readOnlyHint，总线对它们一律先出确认卡：探针用主人令牌回答，
+  # 等价主人在 App 里点允许。
+  local marker c file gw url out rc n=0 card payload cid reply
+  marker="$(tr -dc 'a-f0-9' </dev/urandom | head -c 6)"
+  [[ -n "$marker" ]] || { echo "生成不了标记"; return 1; }
+  c="$(_container "$_PLUGIN_ID" esphome)"
+  [[ -n "$c" ]] || { echo "找不到 esphome 容器"; return 1; }
+  file="smoke-mcp-marker-$marker.yaml"
+  docker exec -i "$c" sh -c "cat > /config/$file" <<EOF || { echo "写不进 /config/$file"; return 1; }
+esphome:
+  name: smoke-mcp-marker-$marker
+EOF
   gw="$(_container "$_HERMES_ID" gateway)"
   [[ -n "$gw" ]] || { echo "找不到 Hermes gateway 容器"; return 1; }
   url="$(docker exec "$gw" printenv WONTON_MCP_URL 2>/dev/null)"
@@ -116,6 +124,7 @@ PY
     break
   done
   wait "$pid" && rc=0 || rc=$?
+  docker exec "$c" rm -f "/config/$file" >/dev/null 2>&1 || true
   out="$(cat "$(dirname "$SMOKE_STATE")/.esphome-mcp.out" 2>/dev/null)"
   rm -f "$(dirname "$SMOKE_STATE")/.esphome-mcp.out"
   [[ "$rc" == 0 ]] || { echo "工具调用失败（rc=$rc）：$(head -c 200 <<<"$out")"; return 1; }
