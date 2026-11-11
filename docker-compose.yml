@@ -105,10 +105,9 @@ x-wonton:
     # mDNS 发现设备、OTA 无线刷机要宿主网络（上游官方部署同款）。
     # 网页只听回环，局域网绕不过网关；编译出网也走宿主网络，不经平台出网代理。
     - network.host
-  # USB 刷机：规范定义了 devices.usb / devices.serial（可选、默认关），核心还没兑现——
-  # 核心的权限兑现表不含这两项，声明了安装就被拒（"doesn't support permission devices.usb yet"，
-  # 2026-11-12 实测）。等核心把设备选择流程做完再加回来；在那之前首次刷机走
-  # 电脑浏览器里的网页安装器（上游推荐路径，浏览器经 USB 直接连设备，不用这台主机的 USB）。
+  # 首次 USB 刷机（把固件从电脑经 USB 线装进设备）：上游推荐走电脑浏览器里的网页安装器，
+  # 浏览器经 USB 直接连设备，不用这台主机的 USB；之后的改固件走 OTA 无线刷机，不需要 USB。
+  # 规范的 devices.usb / devices.serial（可选、默认关）映射到 compose devices 后可再声明。
   secrets:
     dashboard_password:
       # 网页登录密码，主人在插件详情页查看。
