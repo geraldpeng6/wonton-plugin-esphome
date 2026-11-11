@@ -1,78 +1,123 @@
-# 示例插件：nginx 显示一个网页，向登录的人问好。改成自己的应用见 https://github.com/wontonapp/wonton-docs/blob/main/develop.md#写插件。
+# ESPHome Device Builder：用网页给 ESP32/ESP8266 写固件、无线刷机。
+# mDNS 发现设备和 OTA 都要宿主网络（上游官方部署就是 network_mode: host）；
+# 网页只听回环，由核心中继接入网关，局域网绕不过网关。
 services:
-  web:
-    # 镜像按摘要固定（多架构镜像写清单列表的摘要），标签只给人看。
-    image: nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
+  # 一次性：给 MCP 请求头算 Basic 凭据 base64("wonton:<网页密码>")。
+  # 头模板里算不了 base64，按规范的一次性服务 + collect 写法交给核心收存。
+  init:
+    image: ghcr.io/esphome/esphome:2026.10.2@sha256:4a918585150e95e7675be84a347384ff308fde1bd32d0e4472666e1252cc0e8f
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - printf 'wonton:%s' "$${ESPHOME_PASSWORD}" | base64 | tr -d '\n' > /run/mcp-basic
     environment:
-      # 网关代登录：SSI 回显的 Remote-User 只信核心带来的。官方镜像启动时对 templates 目录里的
-      # *.template 做 envsubst，把下面的地址换进 nginx 配置（见 web/default.conf.template）。
-      WONTON_CORE_ADDRESS: ${WONTON_CORE_ADDRESS}
-    # 包里的文件经 configs 交给容器（核心在启动前写进去），不能用卷挂载。
-    configs:
-      - source: site
-        target: /etc/nginx/templates/default.conf.template
-      - source: page
-        target: /usr/share/nginx/html/index.html
-      - source: tokens
-        target: /usr/share/nginx/html/tokens.css
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      start_interval: 1s
+      ESPHOME_PASSWORD: ${WONTON_SECRET_DASHBOARD_PASSWORD}
+    network_mode: none
+    restart: "no"
 
-configs:
-  site:
-    file: web/default.conf.template
-  page:
-    file: web/index.html
-  tokens:
-    file: web/tokens.css
+  esphome:
+    image: ghcr.io/esphome/esphome:2026.10.2@sha256:4a918585150e95e7675be84a347384ff308fde1bd32d0e4472666e1252cc0e8f
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ}
+      # 上游 dashboard 的登录凭据。用新版变量名：裸 USERNAME/PASSWORD 会撞 shell 的 $USERNAME，上游已弃用。
+      ESPHOME_USERNAME: wonton
+      ESPHOME_PASSWORD: ${WONTON_SECRET_DASHBOARD_PASSWORD}
+    volumes:
+      # 设备 YAML、secrets.yaml 和 .esphome/ 编译缓存都在这里，重装不丢。
+      - ${WONTON_APP_DATA}/config:/config
+    network_mode: host
+    # 上游默认绑定所有网卡；--host 127.0.0.1 后局域网直连不进来，网页经核心中继走网关。
+    # mDNS 由 dashboard 里独立的 zeroconf 套接字处理，不受 HTTP 绑定地址影响。
+    command: ["dashboard", "/config", "--host", "127.0.0.1", "--port", "6052"]
+    # /version 公开（设了密码也回 200），和上游镜像自带的 HEALTHCHECK 同一条。
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:6052/version"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      start_interval: 2s
 
 x-wonton:
-  spec: "0.6"
-  # 换成你自己的：反向域名形式，装上以后不能改。
-  id: app.example.hello
-  version: 0.1.1
+  # stable 核心支持到 0.11；用到的字段最高只到 0.8（mcp.headers、optional_permissions、show_owner）。
+  spec: "0.11"
+  # 反向域名：上游官网 esphome.io。
+  id: io.esphome.esphome
+  version: 0.1.0
   kind: app
-  title: { zh: 你好, en: Hello }
-  description: { zh: 向登录的人问好的示例网页, en: An example page that greets whoever is signed in }
+  title: { zh: 自制设备固件（ESPHome）, en: ESPHome }
+  description:
+    zh: 给自制的智能设备写固件、无线刷机，接入智能家居
+    en: Write firmware for your DIY smart devices and flash it over the air
   icon: icon.svg
   notices: [NOTICE]
-  screenshots: [screenshots/home.png]
-  author: { name: Example }
-  homepage: https://nginx.org
-  # 应用（这里是 nginx）的许可证；插件包自己的许可证写在仓库的 LICENSE 里。
-  license: BSD-2-Clause
+  screenshots: [screenshots/home.png, screenshots/editor.png]
+  author: { name: geraldpeng6, url: https://github.com/geraldpeng6 }
+  homepage: https://esphome.io
+  # 上游 ESPHome：C++ 部分 GPLv3，Python 及其余 MIT（"ESPHome License"）；
+  # 镜像里还装了上游的网页面板 esphome-device-builder（Apache-2.0）。
+  # 插件包自己的许可证写在仓库的 LICENSE 里。
+  license: MIT AND GPL-3.0-only AND Apache-2.0
   tags:
-    zh: [工具]
-    en: [Tools]
+    zh: [智能家居, 开发]
+    en: [Home, Developer]
   about:
     zh: |
-      一个示例网页：登录以后，页面会向你问好。新建插件时可以照着改。
+      给动手做的智能设备装大脑：一块 ESP32 开发板接上传感器或开关，在网页里描述它是什么、接了什么，
+      ESPHome 帮你生成固件刷进去，设备就能接入 Home Assistant 这类智能家居平台。
+
+      新建设备像填表一样简单：选板子、加组件，网页向导会生成设备配置；刷过一次固件以后，改配置
+      就能无线更新，不用再接线。第一次刷机在电脑浏览器的网页安装器里完成，之后都在家里无线进行。
+
+      设备配置可以让家里的助手代写：助手能读改设备配置、查组件文档、验证并编译固件。
     en: |
-      An example page: once you are signed in, the page says hello. Copy it as a starting point for a new plugin.
-  release_notes: { zh: 名字和说明更新。, en: Product name and description update. }
+      Give your DIY devices a brain: wire a sensor or switch to an ESP32 board, describe what it is
+      in the web interface, and ESPHome builds and flashes the firmware so the device works with
+      Home Assistant and similar smart home platforms.
+
+      Creating a device is like filling in a form: pick a board, add components, and the wizard
+      generates the configuration. After the first flash, configuration changes update over Wi-Fi —
+      no cables needed. The first flash runs from a computer's browser via the web installer;
+      everything after that happens wirelessly at home.
+
+      Your assistant can write device configurations for you: it can read and edit them, look up
+      component documentation, and validate and compile firmware.
+  release_notes: { zh: 第一版。, en: First release. }
+  setup:
+    zh: 打开插件网页，用户名 wonton，密码在插件详情页里查看复制。
+    en: Open the plugin's web page; sign in as user "wonton" with the password shown in the plugin details.
   webui:
-    service: web
-    port: 80
-    # 示例页回显网关注入的用户名，见 https://github.com/wontonapp/wonton-docs/blob/main/plugin-spec.md#网关代登录sso-proxy。
-    sso: proxy
-    proxy:
-      headers:
-        Remote-User: "{user}"
-  # 能放进侧边栏“我的应用”的页面，见 https://github.com/wontonapp/wonton-docs/blob/main/plugin-spec.md#应用页面tabs。放不放由用户决定。
-  tabs:
-    - id: home
-      title: { zh: 主页, en: Home }
-      icon: tabs/home.svg
-      icon_selected: tabs/home-fill.svg
-      path: /
-      # 这个页面没做适配，用默认的 inset：从状态栏下沿开始，页面不用管安全区。
-      # 想让内容从状态栏后面滚过，写 layout: edge-to-edge，并用 --wonton-inset-* 留出系统安全区的位置。
-  permissions: []
-  # 上游 nginx 官方镜像，amd64 和 arm64 都有；上游没写最低内存，按本机空闲实测取整（实测约 24M，取 64M）。
+    service: esphome
+    port: 6052
+    sso: none
+  # 上游 dashboard 自带 MCP 服务器（POST /api/mcp，无状态 JSON-RPC）：
+  # 助手经它读改设备配置、查组件文档、验证、编译和装机。
+  # /api/mcp 要凭据（Basic 或 Bearer），用一次性服务算好的 Basic 头。
+  mcp:
+    service: esphome
+    port: 6052
+    path: /api/mcp
+    transport: streamable-http
+    headers:
+      Authorization: Basic {secret:mcp_basic}
+  permissions:
+    # mDNS 发现设备、OTA 无线刷机要宿主网络（上游官方部署同款）。
+    # 网页只听回环，局域网绕不过网关；编译出网也走宿主网络，不经平台出网代理。
+    - network.host
+  # 首次 USB 刷机（把固件从电脑经 USB 线装进设备）：上游推荐走电脑浏览器里的网页安装器，
+  # 浏览器经 USB 直接连设备，不用这台主机的 USB；之后的改固件走 OTA 无线刷机，不需要 USB。
+  # 规范的 devices.usb / devices.serial（可选、默认关）映射到 compose devices 后可再声明。
+  secrets:
+    dashboard_password:
+      # 网页登录密码，主人在插件详情页查看。
+      generate: { bytes: 24 }
+      show_owner:
+        label: { zh: 网页密码, en: Web PASSWORD, zh-Hant: 網頁密碼, ja: ウェブのPASSWORD }
+    mcp_basic:
+      # init 服务算好的 MCP Basic 凭据，见上面 init 的注释。
+      collect: { service: init, path: /run/mcp-basic }
   requirements:
     arch: [amd64, arm64]
-    memory: 64M
+    # 上游没写最低内存；装好后实测取整。
+    memory: 1G
